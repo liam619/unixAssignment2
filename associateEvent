@@ -1,0 +1,35 @@
+#!/bin/bash
+
+initLED() {
+    while true
+    do
+        if [ "$1" = "memory" ]; then
+            getPercentage=$(ps -eo %mem,comm | awk '{arr[$2]+=$1}; END {for (i in arr) {print i, arr[i]}}' | grep "$2")
+        elif [ "$1" = "cpu" ]; then
+            getPercentage=$(ps -eo %cpu,comm | awk '{arr[$2]+=$1}; END {for (i in arr) {print i, arr[i]}}' | grep "$2")
+        fi
+
+        getPercentage=$(awk '{print $2}' <<< "$getPercentage")
+
+        onTime=$(echo "$getPercentage/100" | bc -l)
+        offTime=$(echo "1-$onTime" | bc -l)
+
+        echo 1 | sudo tee /sys/class/leds/"$3"/brightness > /dev/null
+        sleep "$onTime"
+
+        echo 0 | sudo tee /sys/class/leds/"$3"/brightness > /dev/null
+        sleep "$offTime"
+
+    done
+}
+
+while getopts o:p:l: option; do
+    case $option in
+        o) opt=$OPTARG;;
+        p) prog=$OPTARG;;
+        l) led=$OPTARG;;
+        ?) echo "Invalid option $OPTARG"
+    esac
+done
+
+initLED "$opt" "$prog" "$led"

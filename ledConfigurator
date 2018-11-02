@@ -1,0 +1,275 @@
+#!/bin/bash
+
+#Command set to global variable to use all over the program
+PRINTF=/usr/bin/printf
+CLEAR=/usr/bin/clear
+SLEEP=/bin/sleep
+
+# read all the content in the directory
+mapfile -t m < <(ls /sys/class/leds) 
+
+# Prevent CTRL+C to stop the program
+trap '' 2 
+
+#Program start from here
+initProgram(){
+
+    while true
+    do
+        count=1
+
+        $CLEAR
+        $PRINTF "Welcome to the LED Configuration Menu \\n"
+        $PRINTF "===================================== \\n"
+
+	# Loop all the directory and list here
+        for i in "${m[@]}"
+        do
+            echo "$count. ${i}" 
+            i=$i+1
+            ((count++))
+        done
+
+        $PRINTF "Q. Quit \\n"
+        $PRINTF "Please enter a number (1 - ${#m[@]}) for the LED configuration or Q to quit: "
+
+	# Read user choice and determine the action
+        read -r CHOICE
+
+        if [ "$CHOICE" == "q" ] || [ "$CHOICE" == "Q" ]; then
+            $PRINTF "Ok bye bye \\n"
+            break
+        elif [[ "$CHOICE" =~ ^[0-9]+$ ]]; then
+            if [ "$CHOICE" -gt ${#m[@]} ] || [ "$CHOICE" -le 0 ]; then
+                $PRINTF "ERROR >> Please enter number between (1 - ${#m[@]})!"
+                $SLEEP 1
+            else
+                # Read the user choice and redirect to the LED directory and display in menu style
+                v=$CHOICE-1
+                ledManipulation "$v"
+            fi
+       else
+           $PRINTF "ERROR >> Invalid input!" 
+           $SLEEP 1
+        fi
+    done
+}
+
+#Function to manipulate the LED selected at main screen
+ledManipulation(){
+
+    while true
+    do
+        $CLEAR
+        $PRINTF "${m[$1]} \\n"
+        $PRINTF "========== \\n"
+        $PRINTF "What would you like to do with this LED? \\n"
+        $PRINTF "1. Turn on LED \\n"
+        $PRINTF "2. Turn off LED \\n"
+        $PRINTF "3. Associate with system event \\n"
+        $PRINTF "4. Associate with the performance of a process \\n"
+        $PRINTF "5. Stop association with a process' performance \\n"
+        $PRINTF "6. Back to Main menu \\n"
+        $PRINTF "Please enter a number (1-6) for your choice: "
+
+	# Read user choice and determine the action
+        read -r OPTION
+
+        case $OPTION in
+	# Turn on the LED permanent
+        1) echo 1 | sudo tee /sys/class/leds/"${m[$1]}"/brightness > /dev/null
+           ;;
+	# Turn off the LED permanent
+        2) echo 0 | sudo tee /sys/class/leds/"${m[$1]}"/brightness > /dev/null
+           ;;
+	# Redirect to associate event menu
+        3) associateEvent "$1" 
+           ;;
+	# Redirect to associate process menu
+        4) associateProcess "$1"
+           ;;
+	# Perform unassociation of process with the led
+        5) unAssociateProcess "$1"
+           ;;
+        6) break
+           ;;
+        *) $PRINTF "ERROR >> Please enter number between (1-6)!"
+           $SLEEP 1
+           ;;
+        esac
+    done
+}
+
+#Function to associate the LED to a trigger event
+associateEvent(){
+
+    while true
+    do
+	# Perform file reading into event variable
+        IFS=" " read -r -a event <<< "$(cat /sys/class/leds/"${m[$1]}"/trigger)"
+        count=1
+
+        $CLEAR
+        $PRINTF "Associate LED with a system event \\n"
+        $PRINTF "================================= \\n"
+        $PRINTF "Available events are: \\n"
+        $PRINTF "--------------------- \\n"
+
+	# Loop and display the file content 
+        for x in "${event[@]}"
+        do
+            echo "$count. ${x}" | sed 's/\[\([^]]*\)\]/\1\*/g'
+            x=$x+1
+            ((count++))
+        done
+
+        $PRINTF "Q. Quit to previous menu \\n"
+        $PRINTF "Please select an option (1-${#event[@]}):"
+
+	# Read user choice and determine the action
+        read -r OPTEVT
+
+        if [ "$OPTEVT" == "q" ] || [ "$OPTEVT" == "Q" ]; then
+           break
+        elif [[ "$OPTEVT" =~ ^[0-9]+$ ]]; then # Validate the input is numeric
+            if [ "$OPTEVT" -gt ${#event[@]} ]; then 
+                $PRINTF "ERROR >> Please enter number between (1-${#event[@]})!"
+                $SLEEP 1
+            else
+                # Read user choice and set the event in the trigger file
+                num=$OPTEVT-1
+                echo "${event[num]}" | sed 's/[][]//g' | sudo tee /sys/class/leds/"${m[$1]}"/trigger > /dev/null
+                $SLEEP 1
+            fi
+        else
+            $PRINTF "ERROR >> Invalid input!"
+            $SLEEP 1
+        fi
+
+	break
+    done
+}
+
+#Function to associate the LED to the process
+associateProcess(){
+
+    while true 
+    do
+        $CLEAR
+        $PRINTF "Associate LED with the performance of a process \\n"
+        $PRINTF "----------------------------------------------- \\n"
+        $PRINTF "Please enter the name of the program to monitor(partial names are ok):"
+
+	# Read user input
+        read -r OPTPROC
+    
+	# Find and match program from the user input
+        mapfile -t process < <(ps -eo comm | grep "$OPTPROC" | sort | uniq )
+
+	# If match found only 1
+        OPTPROC="${process[*]}"
+
+        if [ "${#process[@]}" -eq 0 ]; then
+            # If user input have no match found
+            $PRINTF "No program match your input."
+            $SLEEP 1
+            break
+        elif [ "${#process[@]}" -gt 1 ]; then
+            # If user input have multiple match
+            $PRINTF "Name Conflict \\n"
+            $PRINTF "------------- \\n"
+            $PRINTF "I have detected a name conflict. Do you want to monitor: \\n"
+
+            count=1
+
+	    # Loop all the program found and diplay 
+            for x in "${process[@]}"
+            do
+                echo "$count. ${x}" | sed 's/\[\([^]]*\)\]/\1\*/g' 
+                x=$x+1
+                ((count++))
+            done
+
+            $PRINTF "$count. Cancel Request \\n"  
+	    $PRINTF "Please select an option (1-$count):"
+
+	    # Read user input and determine the action
+            read -r OPTPROC
+
+            if [[ "$OPTPROC" =~ ^[0-9]+$ ]]; then # Validate the user input is numeric
+                if [ "$OPTPROC" -eq $count ]; then
+                    break
+                elif [ "$OPTPROC" -gt $count ] || [ "$OPTPROC" -le 0 ]; then
+                    $PRINTF "Input value cannot great than $count or lesser equal to 0! \\n"
+		    $SLEEP 1
+		    break
+                else
+                    num=$OPTPROC-1
+                    OPTPROC="${process[$num]}" # Store the user selected option
+                fi
+            else
+                $PRINTF "Invalid input found. \\n"
+		$SLEEP 1
+		break
+            fi
+        fi
+    
+        $PRINTF "Do you wish to 1) monitor MEMORY 2) monitor CPU? [enter MEMORY or CPU]:"
+
+	# Read user input for which to monitor
+        read -r OPTMON 
+
+        #monOption=$(monOption | tr '[:lower:]' '[:upper:]') 
+
+	# Validate to ensure user enter the correct choices
+        if [ "$OPTMON" != "cpu" ] && [ "$OPTMON" != "memory" ]; then
+            $PRINTF "Invalid input, key in only cpu or memory!"
+        else 
+            killProcess # Call this function to kill process that exist
+	    # Call theh background script to perform the job
+            ./associateEvent -o "$OPTMON" -p "$OPTPROC" -l "${m[$1]}" &
+            $PRINTF "Starting to monitor $OPTPROC"
+	fi
+
+        $SLEEP 1
+	break
+    done
+}
+
+#Function to unassociate the process, check PID whether pid exist? check is associated to this led?
+unAssociateProcess(){
+    selectedLed=${m[$1]}
+
+    # Get the process ID
+    pid=$(awk '{print $1}' <<< "$(ps -eo pid,comm | grep associateEvent)")
+
+    #  Validate pid is not empty
+    if [ -n "$pid" ]; then 
+       led=$(awk '{print $NF}' <<< "$(ps -p "$pid" -o args=)")
+
+       # Match selected LED and associated LED
+       if [ "$selectedLed" = "$led" ]; then
+           sudo kill "$pid" > /dev/null
+       else
+           $PRINTF "Process not associate to this LED."
+       fi
+    else
+        $PRINTF "No process associate to this LED."
+    fi
+
+    $SLEEP 1
+}
+
+#Function solely to kill the process without any checking
+killProcess(){
+    
+    # Get the process ID
+    pid=$(awk '{print $1}' <<< "$(ps -eo pid,comm | grep associateEvent)")
+
+    # Validate pid is not empty
+    if [ -n "$pid" ]; then 
+        sudo kill "$pid" > /dev/null
+    fi
+}
+
+initProgram
